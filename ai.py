@@ -18,8 +18,8 @@ KATEGORI PENGELUARAN: Makanan & Minuman, Transportasi, Tagihan, Sewa/Cicilan, Be
 
 Catatan kategori:
 - "Kebutuhan Anak" = kebutuhan anak seperti mainan, baju anak, susu, vitamin, obat anak, perlengkapan bayi
-- "Makanan & Minuman" = makan harian, lauk pauk, sayur, bumbu, jajan, buah
-- "Belanja Bulanan" = sembako (beras, minyak, sabun, dll)
+- "Makanan & Minuman" = makan di luar, jajan, beli makanan siap saji, minuman, restoran, warung
+- "Belanja Bulanan" = belanja bahan masak: sayur, bumbu, lauk pauk, beras, minyak, telur, tahu, tempe, sabun, sembako, kebutuhan dapur
 
 Aturan ketat:
 1. Analisis pesan user, tentukan otomatis: Jenis, Kategori, Keterangan, Jumlah, dan Tanggal
