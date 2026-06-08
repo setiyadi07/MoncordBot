@@ -1,12 +1,17 @@
 import json
 import re
+from datetime import datetime, timedelta
 from groq import Groq
 from config import GROQ_API_KEY
-from sheets import append_transaction, delete_matching_row, delete_last_row
+from sheets import append_transaction, delete_matching_row, delete_last_row, get_summary
 
 client = Groq(api_key=GROQ_API_KEY)
 
-SYSTEM_PROMPT = """Kamu adalah asisten pencatat keuangan pribadi bernama Moncord.
+def _build_system_prompt():
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    return f"""Kamu adalah asisten pencatat keuangan pribadi bernama Moncord.
+Hari ini: {today}. Kemarin: {yesterday}.
 
 KATEGORI PEMASUKAN: Gaji, Bonus/THR, Penghasilan Sampingan, Investasi/Dividen, Lainnya
 KATEGORI PENGELUARAN: Makanan & Minuman, Transportasi, Tagihan, Sewa/Cicilan, Belanja Bulanan, Hiburan, Kesehatan, Pendidikan, Pakaian, Tabungan, Investasi, Donasi/Zakat, Kebutuhan Anak, Lainnya
@@ -17,21 +22,27 @@ Catatan kategori:
 - "Belanja Bulanan" = sembako (beras, minyak, sabun, dll)
 
 Aturan ketat:
-1. Analisis pesan user, tentukan otomatis: Jenis, Kategori, Keterangan, dan Jumlah
+1. Analisis pesan user, tentukan otomatis: Jenis, Kategori, Keterangan, Jumlah, dan Tanggal
 2. Jika user ingin MENYIMPAN transaksi dan semua info lengkap, balas HANYA dengan JSON:
-   {"action":"save","jenis":"Pengeluaran","kategori":"Makanan & Minuman","keterangan":"Nasi Padang","jumlah":25000}
+   {{"action":"save","jenis":"Pengeluaran","kategori":"Makanan & Minuman","keterangan":"Nasi Padang","jumlah":25000,"tanggal":"{today}"}}
+   - Jika user sebut "kemarin" → tanggal: "{yesterday}"
+   - Jika user sebut "hari ini" atau tidak menyebut waktu → tanggal: "{today}"
 3. Jika user ingin MENGHAPUS transaksi (kata kunci: hapus, salah, batalkan, delete, cancel), balas HANYA dengan JSON:
-   {"action":"delete","jenis":"Pemasukan","kategori":"Investasi/Dividen","keterangan":"Gain Saham","jumlah":1000000}
-   Isi field sesuai transaksi yang ingin dihapus. Jika user tidak menyebut detail, gunakan field yang diketahui saja (boleh kosong "").
-4. Jika ada info yang benar-benar tidak bisa ditentukan, tanya SATU pertanyaan pendek saja
-5. Format jumlah: angka bulat saja tanpa titik/koma (contoh: 25000)
-6. Jangan minta konfirmasi sebelum menyimpan atau menghapus
+   {{"action":"delete","jenis":"Pemasukan","kategori":"Investasi/Dividen","keterangan":"Gain Saham","jumlah":1000000}}
+4. Jika user minta LAPORAN/RINGKASAN/REPORT (kata kunci: laporan, laporkan, report, ringkasan, rekap, summary, catatan keuangan, pengeluaran bulan, total), balas HANYA dengan JSON:
+   {{"action":"report"}}
+5. Jika ada info yang benar-benar tidak bisa ditentukan, tanya SATU pertanyaan pendek saja
+6. Format jumlah: angka bulat saja tanpa titik/koma (contoh: 25000)
+7. Jangan minta konfirmasi sebelum menyimpan atau menghapus
 
 Contoh respons benar:
-- User: "makan nasi padang 25rb" → {"action":"save","jenis":"Pengeluaran","kategori":"Makanan & Minuman","keterangan":"Nasi Padang","jumlah":25000}
-- User: "gaji 5jt" → {"action":"save","jenis":"Pemasukan","kategori":"Gaji","keterangan":"Gaji Bulanan","jumlah":5000000}
-- User: "hapus gain saham 1jt" → {"action":"delete","jenis":"Pemasukan","kategori":"Investasi/Dividen","keterangan":"Gain Saham","jumlah":1000000}
-- User: "salah, hapus yang tadi" → {"action":"delete","jenis":"","kategori":"","keterangan":"","jumlah":""}
+- User: "makan nasi padang 25rb" → {{"action":"save","jenis":"Pengeluaran","kategori":"Makanan & Minuman","keterangan":"Nasi Padang","jumlah":25000,"tanggal":"{today}"}}
+- User: "kemarin beli sayur 50rb" → {{"action":"save","jenis":"Pengeluaran","kategori":"Makanan & Minuman","keterangan":"Sayur","jumlah":50000,"tanggal":"{yesterday}"}}
+- User: "gaji 5jt" → {{"action":"save","jenis":"Pemasukan","kategori":"Gaji","keterangan":"Gaji Bulanan","jumlah":5000000,"tanggal":"{today}"}}
+- User: "hapus gain saham 1jt" → {{"action":"delete","jenis":"Pemasukan","kategori":"Investasi/Dividen","keterangan":"Gain Saham","jumlah":1000000}}
+- User: "salah, hapus yang tadi" → {{"action":"delete","jenis":"","kategori":"","keterangan":"","jumlah":""}}
+- User: "laporkan pengeluaran" → {{"action":"report"}}
+- User: "bisa kasih laporan?" → {{"action":"report"}}
 """
 
 # Per-user conversation history (in-memory)
@@ -51,7 +62,7 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history[user_id],
+        messages=[{"role": "system", "content": _build_system_prompt()}] + conversation_history[user_id],
         temperature=0.1,
         max_tokens=256,
     )
@@ -65,14 +76,59 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
         if json_match:
             data = json.loads(json_match.group())
 
+            # ── REPORT ────────────────────────────────────────
+            if data.get("action") == "report":
+                current_month = datetime.now().strftime("%m/%Y")
+                rows = get_summary(month=current_month)
+                if not rows:
+                    return f"📭 Belum ada transaksi bulan {datetime.now().strftime('%B %Y')}.", None
+
+                total_masuk = sum(
+                    int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
+                    for r in rows if r.get("Jenis") == "Pemasukan"
+                )
+                total_keluar = sum(
+                    int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
+                    for r in rows if r.get("Jenis") == "Pengeluaran"
+                )
+                saldo = total_masuk - total_keluar
+
+                kategori_keluar: dict[str, int] = {}
+                for r in rows:
+                    if r.get("Jenis") == "Pengeluaran":
+                        kat = r.get("Kategori", "Lainnya")
+                        amt = int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
+                        kategori_keluar[kat] = kategori_keluar.get(kat, 0) + amt
+
+                breakdown = "\n".join(
+                    f"  • {k}: Rp {v:,}".replace(",", ".")
+                    for k, v in sorted(kategori_keluar.items(), key=lambda x: -x[1])
+                )
+                text = (
+                    f"📊 *Laporan {datetime.now().strftime('%B %Y')}*\n"
+                    f"Total transaksi: {len(rows)}\n\n"
+                    f"💰 Pemasukan : Rp {total_masuk:,}\n".replace(",", ".")
+                    + f"💸 Pengeluaran: Rp {total_keluar:,}\n".replace(",", ".")
+                    + f"🏦 Saldo      : Rp {saldo:,}\n\n".replace(",", ".")
+                    + f"📂 *Rincian Pengeluaran:*\n{breakdown}"
+                )
+                return text, None
+
             # ── SAVE ──────────────────────────────────────────
             if data.get("action") == "save":
                 kategori = data["kategori"]
+                # Parse tanggal from AI response, fallback to today
+                tanggal_str = data.get("tanggal", "")
+                try:
+                    tanggal_dt = datetime.strptime(tanggal_str, "%Y-%m-%d")
+                except (ValueError, TypeError):
+                    tanggal_dt = datetime.now()
                 append_transaction(
                     jenis=data["jenis"],
                     kategori=kategori,
                     keterangan=data["keterangan"],
-                    jumlah=str(int(data["jumlah"]))
+                    jumlah=str(int(data["jumlah"])),
+                    tanggal=tanggal_dt
                 )
                 conversation_history[user_id] = []
                 return "Berhasil dicatat!", kategori

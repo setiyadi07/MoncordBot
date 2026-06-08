@@ -40,10 +40,10 @@ def _parse_sheets_date(serial) -> datetime:
         return None
 
 
-def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str) -> bool:
+def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, tanggal: datetime = None) -> bool:
     """Save a new income/expense row to Google Sheets."""
     sheet = get_sheet()
-    tanggal_serial = _to_sheets_date(datetime.now())
+    tanggal_serial = _to_sheets_date(tanggal if tanggal else datetime.now())
     jumlah_int = int(str(jumlah).replace(",", "").replace(".", "").strip())
     sheet.append_row(
         [tanggal_serial, jenis, kategori, keterangan, jumlah_int],
