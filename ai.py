@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta
 from groq import Groq
 from config import GROQ_API_KEY
-from sheets import append_transaction, delete_matching_row, delete_last_row, get_summary, get_summary_sheet
+from sheets import append_transaction, delete_matching_row, delete_last_row, get_summary, get_report_this_month
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -78,7 +78,7 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
 
             # ── REPORT ────────────────────────────────────────
             if data.get("action") == "report":
-                return get_summary_sheet(), None
+                return get_report_this_month(), None
 
             # ── SAVE ──────────────────────────────────────────
             if data.get("action") == "save":

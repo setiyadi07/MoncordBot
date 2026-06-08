@@ -52,6 +52,72 @@ def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, 
     return True
 
 
+def get_report_this_month() -> str:
+    """Calculate report directly from Tracker sheet for current month."""
+    try:
+        sheet = get_sheet()
+        all_values = sheet.get_all_values()
+        if len(all_values) <= 1:
+            return f"📭 Belum ada transaksi bulan {datetime.now().strftime('%B %Y')}."
+
+        headers = all_values[0]
+        try:
+            col_tanggal  = headers.index('Tanggal')
+            col_jenis    = headers.index('Jenis')
+            col_kategori = headers.index('Kategori')
+            col_jumlah   = headers.index('Jumlah (Rp)')
+        except ValueError:
+            return "❌ Format sheet tidak sesuai."
+
+        now = datetime.now()
+        start_serial = _to_sheets_date(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+        end_serial   = _to_sheets_date(now)
+
+        total_masuk  = 0
+        total_keluar = 0
+        kategori_keluar = {}
+
+        for row in all_values[1:]:
+            if len(row) <= max(col_tanggal, col_jenis, col_kategori, col_jumlah):
+                continue
+            try:
+                serial  = float(str(row[col_tanggal]).replace(",", ""))
+                if not (start_serial <= serial <= end_serial):
+                    continue
+                jenis   = row[col_jenis]
+                kat     = row[col_kategori]
+                jumlah  = int(str(row[col_jumlah]).replace("Rp","").replace(",","").replace(".","").strip() or 0)
+
+                if jenis == "Pemasukan":
+                    total_masuk += jumlah
+                elif jenis == "Pengeluaran":
+                    total_keluar += jumlah
+                    kategori_keluar[kat] = kategori_keluar.get(kat, 0) + jumlah
+            except (ValueError, IndexError):
+                continue
+
+        saldo = total_masuk - total_keluar
+        month = now.strftime("%B %Y")
+
+        def fmt(n): return f"Rp{n:,}".replace(",", ".")
+
+        lines = [f"📊 *Ringkasan Keuangan — {month}*\n"]
+        lines.append(f"💰 Pemasukan  : {fmt(total_masuk)}")
+        lines.append(f"💸 Pengeluaran: {fmt(total_keluar)}")
+        lines.append(f"🏦 Saldo Sisa : {fmt(saldo)}")
+
+        if kategori_keluar:
+            lines.append("\n📂 *Rincian Pengeluaran:*")
+            for k, v in sorted(kategori_keluar.items(), key=lambda x: -x[1]):
+                pct = (v / total_keluar * 100) if total_keluar > 0 else 0
+                lines.append(f"  • {k}: {fmt(v)} ({pct:.1f}%)")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"❌ Gagal membuat laporan: {str(e)}"
+
+
 def get_summary_sheet() -> str:
     """Read the SUMMARY sheet and return as formatted Telegram text."""
     try:
@@ -61,57 +127,64 @@ def get_summary_sheet() -> str:
         if not rows:
             return "📭 SUMMARY sheet kosong."
 
-        # Find key values by scanning rows
-        pemasukan = "-"
+        pemasukan   = "-"
         pengeluaran = "-"
-        saldo = "-"
+        saldo       = "-"
         kategori_rows = []
         reading_kategori = False
+        header_row_idx   = -1
 
-        for row in rows:
+        for i, row in enumerate(rows):
             cells = [str(c).strip() for c in row]
-            joined = " ".join(cells).strip()
 
-            # Find totals row (contains Rp values next to Pemasukan/Pengeluaran/Saldo headers)
-            if cells[0] in ("Pemasukan", "") and len(cells) >= 3:
-                # Check if this is the values row (has Rp or - or numbers)
-                if any("Rp" in c or c.lstrip("-").replace(",","").replace(".","").isdigit() for c in cells[1:]):
-                    pemasukan  = cells[0] if "Rp" in cells[0] else (cells[1] if len(cells) > 1 else "-")
+            # Find the header row that contains Pemasukan, Pengeluaran, Saldo
+            if "Pemasukan" in cells and "Pengeluaran" in cells:
+                header_row_idx = i
+                # Values are in the NEXT row
+                if i + 1 < len(rows):
+                    val_row = [str(c).strip() for c in rows[i + 1]]
+                    try:
+                        pemasukan   = val_row[cells.index("Pemasukan")]
+                    except (ValueError, IndexError):
+                        pass
+                    try:
+                        pengeluaran = val_row[cells.index("Pengeluaran")]
+                    except (ValueError, IndexError):
+                        pass
+                    # Saldo Sisa
+                    for label in ["Saldo Sisa", "Saldo"]:
+                        if label in cells:
+                            try:
+                                saldo = val_row[cells.index(label)]
+                            except (ValueError, IndexError):
+                                pass
+                            break
+                continue
 
-            # Detect the totals row: 3 values for Pemasukan / Pengeluaran / Saldo
-            if len([c for c in cells if c and c != "-"]) >= 1:
-                if any("Rp" in c for c in cells):
-                    # Try to match Pemasukan / Pengeluaran / Saldo row
-                    non_empty = [c for c in cells if c.strip()]
-                    if len(non_empty) == 3 and not any(x in joined for x in ["Rincian", "Kategori", "%"]):
-                        pemasukan   = non_empty[0]
-                        pengeluaran = non_empty[1]
-                        saldo       = non_empty[2]
-
-            # Detect start of kategori table
-            if "Rincian" in joined or "Kategori" in joined:
+            # Find kategori table header
+            if "Rincian" in " ".join(cells) or ("% Total" in cells) or ("% total" in " ".join(cells).lower()):
                 reading_kategori = True
                 continue
 
-            # Read kategori rows
-            if reading_kategori:
-                name = cells[0] if cells else ""
+            # Read kategori rows (after header, skip the values row)
+            if reading_kategori and i > header_row_idx + 1:
+                name   = cells[0] if len(cells) > 0 else ""
                 amount = cells[1] if len(cells) > 1 else "-"
                 pct    = cells[2] if len(cells) > 2 else "-"
-                if name and name not in ("", "-") and "%" not in name:
+                if name and name not in ("", "-") and "%" not in name and "Rincian" not in name:
                     kategori_rows.append((name, amount, pct))
 
         # Build output
         month = datetime.now().strftime("%B %Y")
         lines = [f"📊 *Ringkasan Keuangan — {month}*\n"]
-        lines.append(f"💰 Pemasukan  : {pemasukan}")
-        lines.append(f"💸 Pengeluaran: {pengeluaran}")
-        lines.append(f"🏦 Saldo Sisa : {saldo}")
+        lines.append(f"💰 Pemasukan  : {pemasukan if pemasukan else '-'}")
+        lines.append(f"💸 Pengeluaran: {pengeluaran if pengeluaran else '-'}")
+        lines.append(f"🏦 Saldo Sisa : {saldo if saldo else '-'}")
 
         if kategori_rows:
             lines.append("\n📂 *Rincian Pengeluaran:*")
             for name, amount, pct in kategori_rows:
-                if amount and amount != "-":
+                if amount and amount not in ("-", ""):
                     lines.append(f"  • {name}: {amount} ({pct})")
                 else:
                     lines.append(f"  • {name}: -")
