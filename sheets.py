@@ -52,6 +52,25 @@ def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, 
     return True
 
 
+def get_summary_sheet() -> str:
+    """Read the SUMMARY sheet and return as formatted text."""
+    try:
+        wb = _get_workbook()
+        sheet = wb.worksheet('SUMMARY')
+        rows = sheet.get_all_values()
+        if not rows:
+            return "📭 SUMMARY sheet kosong."
+
+        lines = ["📊 *Laporan Keuangan (SUMMARY)*\n"]
+        for row in rows:
+            line = "  ".join(str(cell) for cell in row if str(cell).strip())
+            if line.strip():
+                lines.append(line)
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Gagal membaca SUMMARY: {str(e)}"
+
+
 def get_summary(month: str = None) -> list:
     """Return all rows, optionally filtered by month (format: MM/YYYY)."""
     sheet = get_sheet()

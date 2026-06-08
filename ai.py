@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta
 from groq import Groq
 from config import GROQ_API_KEY
-from sheets import append_transaction, delete_matching_row, delete_last_row, get_summary
+from sheets import append_transaction, delete_matching_row, delete_last_row, get_summary, get_summary_sheet
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -78,41 +78,7 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
 
             # ── REPORT ────────────────────────────────────────
             if data.get("action") == "report":
-                current_month = datetime.now().strftime("%m/%Y")
-                rows = get_summary(month=current_month)
-                if not rows:
-                    return f"📭 Belum ada transaksi bulan {datetime.now().strftime('%B %Y')}.", None
-
-                total_masuk = sum(
-                    int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
-                    for r in rows if r.get("Jenis") == "Pemasukan"
-                )
-                total_keluar = sum(
-                    int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
-                    for r in rows if r.get("Jenis") == "Pengeluaran"
-                )
-                saldo = total_masuk - total_keluar
-
-                kategori_keluar: dict[str, int] = {}
-                for r in rows:
-                    if r.get("Jenis") == "Pengeluaran":
-                        kat = r.get("Kategori", "Lainnya")
-                        amt = int(str(r.get("Jumlah (Rp)", 0)).replace(",", "").replace(".", "") or 0)
-                        kategori_keluar[kat] = kategori_keluar.get(kat, 0) + amt
-
-                breakdown = "\n".join(
-                    f"  • {k}: Rp {v:,}".replace(",", ".")
-                    for k, v in sorted(kategori_keluar.items(), key=lambda x: -x[1])
-                )
-                text = (
-                    f"📊 *Laporan {datetime.now().strftime('%B %Y')}*\n"
-                    f"Total transaksi: {len(rows)}\n\n"
-                    f"💰 Pemasukan : Rp {total_masuk:,}\n".replace(",", ".")
-                    + f"💸 Pengeluaran: Rp {total_keluar:,}\n".replace(",", ".")
-                    + f"🏦 Saldo      : Rp {saldo:,}\n\n".replace(",", ".")
-                    + f"📂 *Rincian Pengeluaran:*\n{breakdown}"
-                )
-                return text, None
+                return get_summary_sheet(), None
 
             # ── SAVE ──────────────────────────────────────────
             if data.get("action") == "save":
