@@ -56,11 +56,11 @@ def get_report_this_month() -> str:
     """Calculate report directly from Tracker sheet for current month."""
     try:
         sheet = get_sheet()
-        all_values = sheet.get_all_values()
+        all_values = sheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
         if len(all_values) <= 1:
             return f"📭 Belum ada transaksi bulan {datetime.now().strftime('%B %Y')}."
 
-        headers = all_values[0]
+        headers = [str(h) for h in all_values[0]]
         try:
             col_tanggal  = headers.index('Tanggal')
             col_jenis    = headers.index('Jenis')
@@ -81,7 +81,7 @@ def get_report_this_month() -> str:
             if len(row) <= max(col_tanggal, col_jenis, col_kategori, col_jumlah):
                 continue
             try:
-                serial  = float(str(row[col_tanggal]).replace(",", ""))
+                serial  = float(str(row[col_tanggal]))
                 if not (start_serial <= serial <= end_serial):
                     continue
                 jenis   = row[col_jenis]
