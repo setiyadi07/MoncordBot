@@ -84,7 +84,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         current_month = datetime.now().strftime("%m/%Y")
-        rows = get_summary(month=current_month)
+        rows = get_summary(month=current_month, user_id=update.effective_user.id)
 
         if not rows:
             await update.message.reply_text(
@@ -190,7 +190,7 @@ async def cmd_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Mengambil data budget...")
 
     try:
-        report = get_budget_status(start, end, label)
+        report = get_budget_status(start, end, label, user_id=update.effective_user.id)
         await update.message.reply_text(report, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Budget error: {e}")
@@ -205,7 +205,7 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        deleted = delete_last_row()
+        deleted = delete_last_row(user_id=update.effective_user.id)
         if deleted:
             text = (
                 f"🗑️ *Transaksi terakhir dihapus:*\n"
@@ -253,7 +253,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check budget alert if a transaction was just saved
         if saved_kategori:
             try:
-                alert = check_budget_alerts(saved_kategori)
+                alert = check_budget_alerts(saved_kategori, user_id=user_id)
                 if alert:
                     await update.message.reply_text(alert, parse_mode="Markdown")
             except Exception as e:

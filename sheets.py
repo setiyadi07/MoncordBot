@@ -3,25 +3,27 @@ import json
 from gspread.utils import ValueInputOption
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
-from config import SHEET_ID, SHEET_NAME, CREDENTIALS_PATH, GOOGLE_CREDENTIALS_JSON
+from config import SHEET_ID, SHEET_NAME, CREDENTIALS_PATH, GOOGLE_CREDENTIALS_JSON, USER_SHEETS
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-def _get_workbook():
+def _get_client():
     if GOOGLE_CREDENTIALS_JSON:
-        # Railway: load credentials from environment variable
         info = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
-        # Local: load credentials from file
         creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
-    client = gspread.authorize(creds)
-    return client.open_by_key(SHEET_ID)
+    return gspread.authorize(creds)
 
 
-def get_sheet():
-    return _get_workbook().worksheet(SHEET_NAME)
+def _get_workbook(user_id: int = None):
+    sheet_id = USER_SHEETS.get(user_id, SHEET_ID) if user_id else SHEET_ID
+    return _get_client().open_by_key(sheet_id)
+
+
+def get_sheet(user_id: int = None):
+    return _get_workbook(user_id).worksheet(SHEET_NAME)
 
 
 def _to_sheets_date(dt: datetime) -> float:
@@ -40,9 +42,9 @@ def _parse_sheets_date(serial) -> datetime:
         return None
 
 
-def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, tanggal: datetime = None) -> bool:
+def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, tanggal: datetime = None, user_id: int = None) -> bool:
     """Save a new income/expense row to Google Sheets."""
-    sheet = get_sheet()
+    sheet = get_sheet(user_id)
     tanggal_serial = _to_sheets_date(tanggal if tanggal else datetime.now())
     jumlah_int = int(str(jumlah).replace(",", "").replace(".", "").strip())
     sheet.append_row(
@@ -52,10 +54,10 @@ def append_transaction(jenis: str, kategori: str, keterangan: str, jumlah: str, 
     return True
 
 
-def get_report_this_month() -> str:
+def get_report_this_month(user_id: int = None) -> str:
     """Calculate report directly from Tracker sheet for current month."""
     try:
-        sheet = get_sheet()
+        sheet = get_sheet(user_id)
         all_values = sheet.get_all_values(value_render_option='UNFORMATTED_VALUE')
         if len(all_values) <= 1:
             return f"📭 Belum ada transaksi bulan {datetime.now().strftime('%B %Y')}."
@@ -195,18 +197,18 @@ def get_summary_sheet() -> str:
         return f"❌ Gagal membaca SUMMARY: {str(e)}"
 
 
-def get_summary(month: str = None) -> list:
+def get_summary(month: str = None, user_id: int = None) -> list:
     """Return all rows, optionally filtered by month (format: MM/YYYY)."""
-    sheet = get_sheet()
+    sheet = get_sheet(user_id)
     rows = sheet.get_all_records()
     if month:
         rows = [r for r in rows if str(r.get("Tanggal", "")).endswith(month)]
     return rows
 
 
-def delete_last_row() -> dict:
+def delete_last_row(user_id: int = None) -> dict:
     """Delete the last data row and return the deleted record."""
-    sheet = get_sheet()
+    sheet = get_sheet(user_id)
     all_values = sheet.get_all_values()
     if len(all_values) <= 1:
         return None
@@ -218,11 +220,11 @@ def delete_last_row() -> dict:
 
 
 def delete_matching_row(jenis: str = None, kategori: str = None,
-                        keterangan: str = None, jumlah: str = None) -> dict:
+                        keterangan: str = None, jumlah: str = None, user_id: int = None) -> dict:
     """Find and delete the most recent row matching the given fields.
     Matches are case-insensitive and partial. Returns the deleted row or None.
     """
-    sheet = get_sheet()
+    sheet = get_sheet(user_id)
     all_values = sheet.get_all_values()
     if len(all_values) <= 1:
         return None
@@ -268,10 +270,10 @@ def delete_matching_row(jenis: str = None, kategori: str = None,
 
 # ─── Budget functions ─────────────────────────────────────────────────────────
 
-def get_budget_limits() -> dict:
+def get_budget_limits(user_id: int = None) -> dict:
     """Read budget limits from Budget sheet. Returns {kategori: limit}."""
     try:
-        wb = _get_workbook()
+        wb = _get_workbook(user_id)
         sheet = wb.worksheet('Budget')
         rows = sheet.get_all_values()
         limits = {}
@@ -286,11 +288,11 @@ def get_budget_limits() -> dict:
         return {}
 
 
-def get_spending_by_period(start_date: datetime, end_date: datetime) -> dict:
+def get_spending_by_period(start_date: datetime, end_date: datetime, user_id: int = None) -> dict:
     """Return total spending per category within a date range.
     Returns {kategori: total_spent}
     """
-    sheet = get_sheet()
+    sheet = get_sheet(user_id)
     all_values = sheet.get_all_values()
     if len(all_values) <= 1:
         return {}
@@ -336,11 +338,11 @@ def get_spending_by_period(start_date: datetime, end_date: datetime) -> dict:
     return spending
 
 
-def check_budget_alerts(kategori: str) -> str:
+def check_budget_alerts(kategori: str, user_id: int = None) -> str:
     """Check budget status for a category this month.
     Returns alert message or empty string if OK.
     """
-    limits = get_budget_limits()
+    limits = get_budget_limits(user_id)
     if kategori not in limits:
         return ""
 
@@ -348,7 +350,7 @@ def check_budget_alerts(kategori: str) -> str:
     now = datetime.now()
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    spending = get_spending_by_period(start, now)
+    spending = get_spending_by_period(start, now, user_id)
     spent = spending.get(kategori, 0)
     pct = (spent / limit * 100) if limit > 0 else 0
 
@@ -371,10 +373,10 @@ def check_budget_alerts(kategori: str) -> str:
     return ""
 
 
-def get_budget_status(start_date: datetime, end_date: datetime, period_label: str) -> str:
+def get_budget_status(start_date: datetime, end_date: datetime, period_label: str, user_id: int = None) -> str:
     """Generate full budget status report for a given period."""
-    limits   = get_budget_limits()
-    spending = get_spending_by_period(start_date, end_date)
+    limits   = get_budget_limits(user_id)
+    spending = get_spending_by_period(start_date, end_date, user_id)
 
     if not limits:
         return "Belum ada budget yang diset."

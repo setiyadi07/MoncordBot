@@ -78,7 +78,7 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
 
             # ── REPORT ────────────────────────────────────────
             if data.get("action") == "report":
-                return get_report_this_month(), None
+                return get_report_this_month(user_id), None
 
             # ── SAVE ──────────────────────────────────────────
             if data.get("action") == "save":
@@ -94,7 +94,8 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
                     kategori=kategori,
                     keterangan=data["keterangan"],
                     jumlah=str(int(data["jumlah"])),
-                    tanggal=tanggal_dt
+                    tanggal=tanggal_dt,
+                    user_id=user_id
                 )
                 conversation_history[user_id] = []
                 return "Berhasil dicatat!", kategori
@@ -110,14 +111,15 @@ def chat(user_id: int, message: str) -> tuple[str, str | None]:
 
                 # If no specific info given, delete last row
                 if not any([jenis, kategori, keterangan, jumlah_raw]):
-                    deleted = delete_last_row()
+                    deleted = delete_last_row(user_id)
                 else:
                     jumlah_str = str(int(float(str(jumlah_raw)))) if jumlah_raw else ""
                     deleted = delete_matching_row(
                         jenis=jenis or None,
                         kategori=kategori or None,
                         keterangan=keterangan or None,
-                        jumlah=jumlah_str or None
+                        jumlah=jumlah_str or None,
+                        user_id=user_id
                     )
 
                 if deleted:
