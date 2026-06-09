@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # ─── Auth check ───────────────────────────────────────────────────────────────
 
 def is_authorized(user_id: int) -> bool:
+    logger.info(f"Auth check: user_id={user_id}, ALLOWED_USERS={ALLOWED_USERS}")
     return user_id in ALLOWED_USERS
 
 
