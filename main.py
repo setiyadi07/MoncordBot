@@ -1,5 +1,10 @@
 import logging
+import os
+import threading
+import time
+import requests
 from datetime import datetime, timedelta
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -11,6 +16,34 @@ from telegram.ext import (
 from config import TELEGRAM_TOKEN, ALLOWED_USERS
 from ai import chat, clear_history
 from sheets import get_summary, delete_last_row, check_budget_alerts, get_budget_status
+
+# ─── Flask keep-alive server ──────────────────────────────────────────────────
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def home():
+    return "Moncord Bot is running! 🤖", 200
+
+@flask_app.route("/health")
+def health():
+    return "OK", 200
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=7860)
+
+def self_ping():
+    """Ping own URL every 10 minutes to prevent HF from sleeping."""
+    space_url = os.getenv("SPACE_URL", "")
+    if not space_url:
+        logger.info("SPACE_URL not set — self-ping disabled.")
+        return
+    while True:
+        time.sleep(600)  # 10 minutes
+        try:
+            requests.get(f"{space_url}/health", timeout=10)
+            logger.info(f"Self-ping OK: {space_url}")
+        except Exception as e:
+            logger.warning(f"Self-ping failed: {e}")
 
 # Logging setup
 logging.basicConfig(
@@ -275,6 +308,15 @@ if __name__ == "__main__":
 
     print("Moncord Bot starting...")
     print(f"Authorized users: {ALLOWED_USERS}")
+
+    # Start Flask web server in background thread (required for HF Spaces)
+    t_flask = threading.Thread(target=run_flask, daemon=True)
+    t_flask.start()
+    print("Flask keep-alive server started on port 7860")
+
+    # Start self-ping thread
+    t_ping = threading.Thread(target=self_ping, daemon=True)
+    t_ping.start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
